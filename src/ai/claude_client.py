@@ -1,12 +1,14 @@
 """
-🤖 Cliente Claude AI
-Integração com Anthropic Claude para análise de produtos
+🤖 Cliente Claude AI - Opus 4.5
+Análise inteligente de produtos com viralidade e concorrência
 """
 import os
 import json
 import logging
-from typing import Dict, Optional
-from dataclasses import dataclass
+import re
+from typing import Dict, Optional, List
+from dataclasses import dataclass, field
+from datetime import datetime
 
 try:
     import anthropic
@@ -14,248 +16,191 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
 
-import requests
 from dotenv import load_dotenv
-
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 
 @dataclass
+class AnaliseViralidade:
+    score: int = 0
+    potencial_tiktok: int = 0
+    potencial_instagram: int = 0
+    hashtags_sugeridas: List[str] = field(default_factory=list)
+    hooks_video: List[str] = field(default_factory=list)
+    tendencias_relacionadas: List[str] = field(default_factory=list)
+
+
+@dataclass
+class AnaliseConcorrencia:
+    nivel_saturacao: str = "medio"
+    estimativa_lojas: int = 0
+    diferencial_sugerido: str = ""
+    risco_marca_registrada: bool = False
+    alertas: List[str] = field(default_factory=list)
+
+
+@dataclass
 class AnaliseIA:
-    """Resultado da análise de IA"""
-    aprovado: bool
-    score: float  # 0-100
-    motivo: str
-    titulo_otimizado: str
-    descricao_seo: str
-    tags_sugeridas: list
-    preco_sugerido: float
-    pontos_venda: list
-    riscos: list
+    aprovado: bool = False
+    score: float = 0
+    motivo: str = ""
+    titulo_otimizado: str = ""
+    descricao_seo: str = ""
+    tags_sugeridas: List[str] = field(default_factory=list)
+    preco_sugerido: float = 0.0
+    margem_estimada: float = 0.0
+    pontos_venda: List[str] = field(default_factory=list)
+    publico_alvo: str = ""
+    viralidade: Optional[AnaliseViralidade] = None
+    concorrencia: Optional[AnaliseConcorrencia] = None
+    riscos: List[str] = field(default_factory=list)
+    modelo_usado: str = ""
+    timestamp: str = ""
 
 
 class ClaudeClient:
-    """Cliente para API do Claude (Anthropic)"""
+    """Cliente Claude Opus 4.5"""
 
-    def __init__(self):
+    MODELOS = {
+        "opus": "claude-opus-4-20250514",
+        "sonnet": "claude-sonnet-4-20250514",
+        "sonnet-3.5": "claude-3-5-sonnet-20241022",
+    }
+
+    def __init__(self, modelo: str = "opus"):
         self.api_key = os.getenv("ANTHROPIC_API_KEY")
-        self.model = "claude-3-sonnet-20240229"
+        self.model = self.MODELOS.get(modelo, self.MODELOS["opus"])
+        self.client = None
 
-        if not self.api_key:
-            logger.warning("⚠️ ANTHROPIC_API_KEY não configurada")
-
-        if ANTHROPIC_AVAILABLE and self.api_key:
+        if self.api_key and ANTHROPIC_AVAILABLE:
             self.client = anthropic.Anthropic(api_key=self.api_key)
-        else:
-            self.client = None
+            logger.info(f"✅ Claude {modelo} inicializado")
 
-    def analisar_produto(self, produto: Dict) -> Optional[AnaliseIA]:
-        """
-        Analisa um produto usando Claude AI
-
-        Args:
-            produto: Dict com dados do produto
-
-        Returns:
-            AnaliseIA com resultado ou None em caso de erro
-        """
+    def analisar_produto(self, produto: Dict) -> AnaliseIA:
         if not self.client:
-            logger.warning("⚠️ Cliente Claude não disponível, usando fallback")
-            return self._analise_fallback(produto)
+            return self._fallback(produto)
 
-        prompt = self._build_prompt(produto)
+        prompt = f"""Analise este produto para dropshipping de acessórios no Brasil.
+
+PRODUTO:
+- Título: {produto.get('title', 'N/A')}
+- Preço: ${produto.get('price', 0):.2f}
+- Pedidos: {produto.get('orders', 0)}
+- Rating: {produto.get('rating', 0)}⭐
+- Categoria: {produto.get('category', 'N/A')}
+
+RESPONDA EM JSON:
+{{
+    "aprovado": true/false,
+    "score": 0-100,
+    "motivo": "explicação",
+    "titulo_ptbr": "título português max 70 chars",
+    "descricao_html": "<h3>✨ Título</h3><p>Descrição</p>",
+    "tags": ["tag1", "tag2"],
+    "preco_sugerido_brl": 99.90,
+    "margem_percentual": 55,
+    "pontos_venda": ["ponto1", "ponto2"],
+    "publico_alvo": "descrição público",
+    "viralidade": {{
+        "score": 0-100,
+        "potencial_tiktok": 0-100,
+        "potencial_instagram": 0-100,
+        "hashtags": ["#tag1"],
+        "hooks": ["hook1"],
+        "tendencias": ["tendencia1"]
+    }},
+    "concorrencia": {{
+        "nivel_saturacao": "baixo/medio/alto",
+        "estimativa_lojas": 50,
+        "diferencial_sugerido": "como diferenciar",
+        "risco_marca": false,
+        "alertas": []
+    }},
+    "riscos": ["risco1"]
+}}
+
+Score >= 70 para aprovar."""
 
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=1500,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}]
             )
-
-            result_text = response.content[0].text
-            return self._parse_response(result_text, produto)
-
+            return self._parse(response.content[0].text, produto)
         except Exception as e:
-            logger.error(f"❌ Erro na análise Claude: {e}")
-            return self._analise_fallback(produto)
+            logger.error(f"Erro Claude: {e}")
+            return self._fallback(produto)
 
-    def _build_prompt(self, produto: Dict) -> str:
-        """Constrói prompt para análise"""
-        return f"""Você é um especialista em dropshipping e e-commerce. Analise este produto para uma loja de acessórios (joias, relógios, óculos, bolsas).
-
-DADOS DO PRODUTO:
-- Título: {produto.get('title', 'N/A')}
-- Preço: ${produto.get('price', 0):.2f}
-- Pedidos: {produto.get('orders', 0)}
-- Rating: {produto.get('rating', 0)} ⭐
-- Reviews: {produto.get('reviews', 0)}
-- Categoria: {produto.get('category', 'N/A')}
-- URL: {produto.get('product_url', 'N/A')}
-
-CRITÉRIOS DE AVALIAÇÃO:
-1. Potencial de venda no Brasil
-2. Saturação de mercado (muito concorrido?)
-3. Margem de lucro (markup 2.5x é viável?)
-4. Apelo visual/emocional
-5. Facilidade de marketing
-
-RESPONDA EXATAMENTE NESTE FORMATO JSON:
-{{
-    "aprovado": true/false,
-    "score": 0-100,
-    "motivo": "explicação curta da decisão",
-    "titulo_ptbr": "título otimizado em português (max 70 chars)",
-    "descricao_seo": "descrição persuasiva com emojis e bullet points em HTML",
-    "tags": ["tag1", "tag2", "tag3"],
-    "preco_sugerido_brl": 99.90,
-    "pontos_venda": ["ponto 1", "ponto 2", "ponto 3"],
-    "riscos": ["risco 1", "risco 2"]
-}}
-
-Seja criterioso. Aprove apenas produtos com real potencial (score >= 70).
-"""
-
-    def _parse_response(self, text: str, produto: Dict) -> AnaliseIA:
-        """Parseia resposta do Claude"""
+    def _parse(self, text: str, produto: Dict) -> AnaliseIA:
         try:
-            # Extrai JSON da resposta
-            import re
-            json_match = re.search(r'\{[\s\S]*\}', text)
-            if json_match:
-                data = json.loads(json_match.group())
+            match = re.search(r'\{[\s\S]*\}', text)
+            if match:
+                d = json.loads(match.group())
+                v = d.get('viralidade', {})
+                c = d.get('concorrencia', {})
 
                 return AnaliseIA(
-                    aprovado=data.get('aprovado', False),
-                    score=data.get('score', 0),
-                    motivo=data.get('motivo', ''),
-                    titulo_otimizado=data.get('titulo_ptbr', produto.get('title', '')),
-                    descricao_seo=data.get('descricao_seo', ''),
-                    tags_sugeridas=data.get('tags', []),
-                    preco_sugerido=data.get('preco_sugerido_brl', 0),
-                    pontos_venda=data.get('pontos_venda', []),
-                    riscos=data.get('riscos', []),
+                    aprovado=d.get('aprovado', False),
+                    score=d.get('score', 0),
+                    motivo=d.get('motivo', ''),
+                    titulo_otimizado=d.get('titulo_ptbr', '')[:70],
+                    descricao_seo=d.get('descricao_html', ''),
+                    tags_sugeridas=d.get('tags', []),
+                    preco_sugerido=d.get('preco_sugerido_brl', 0),
+                    margem_estimada=d.get('margem_percentual', 0),
+                    pontos_venda=d.get('pontos_venda', []),
+                    publico_alvo=d.get('publico_alvo', ''),
+                    viralidade=AnaliseViralidade(
+                        score=v.get('score', 0),
+                        potencial_tiktok=v.get('potencial_tiktok', 0),
+                        potencial_instagram=v.get('potencial_instagram', 0),
+                        hashtags_sugeridas=v.get('hashtags', []),
+                        hooks_video=v.get('hooks', []),
+                        tendencias_relacionadas=v.get('tendencias', [])
+                    ),
+                    concorrencia=AnaliseConcorrencia(
+                        nivel_saturacao=c.get('nivel_saturacao', 'medio'),
+                        estimativa_lojas=c.get('estimativa_lojas', 0),
+                        diferencial_sugerido=c.get('diferencial_sugerido', ''),
+                        risco_marca_registrada=c.get('risco_marca', False),
+                        alertas=c.get('alertas', [])
+                    ),
+                    riscos=d.get('riscos', []),
+                    modelo_usado=self.model,
+                    timestamp=datetime.now().isoformat()
                 )
         except Exception as e:
-            logger.error(f"Erro ao parsear resposta: {e}")
+            logger.error(f"Parse error: {e}")
+        return self._fallback(produto)
 
-        return self._analise_fallback(produto)
-
-    def _analise_fallback(self, produto: Dict) -> AnaliseIA:
-        """Análise básica quando IA não está disponível"""
+    def _fallback(self, produto: Dict) -> AnaliseIA:
         orders = produto.get('orders', 0)
         rating = produto.get('rating', 0)
         price = produto.get('price', 0)
 
-        # Score simples baseado em métricas
         score = 0
-        if orders >= 1000:
-            score += 30
-        elif orders >= 500:
-            score += 20
-
-        if rating >= 4.7:
-            score += 30
-        elif rating >= 4.5:
-            score += 20
-
-        if 5 <= price <= 25:
-            score += 20
-        elif price <= 30:
-            score += 10
-
-        aprovado = score >= 60
-
-        # Preço sugerido (markup 2.5x, convertido para BRL)
-        preco_brl = round(price * 2.5 * 5.5, 2)  # USD * markup * taxa
+        if orders >= 1000: score += 30
+        elif orders >= 500: score += 20
+        if rating >= 4.5: score += 25
+        if 5 <= price <= 25: score += 20
 
         return AnaliseIA(
-            aprovado=aprovado,
+            aprovado=score >= 60,
             score=score,
-            motivo="Análise automática baseada em métricas",
+            motivo="Análise automática",
             titulo_otimizado=produto.get('title', '')[:70],
             descricao_seo=f"<p>{produto.get('title', '')}</p>",
-            tags_sugeridas=[produto.get('category', 'acessorios')],
-            preco_sugerido=preco_brl,
-            pontos_venda=["Produto popular", f"{orders} pedidos"],
-            riscos=["Análise sem IA - revisar manualmente"],
+            tags_sugeridas=['acessorios'],
+            preco_sugerido=round(price * 2.5 * 5.5, 2),
+            margem_estimada=50,
+            pontos_venda=[f'{orders} pedidos'],
+            publico_alvo='Mulheres 18-45',
+            viralidade=AnaliseViralidade(score=score),
+            concorrencia=AnaliseConcorrencia(),
+            riscos=['Revisar manualmente'],
+            modelo_usado='fallback',
+            timestamp=datetime.now().isoformat()
         )
-
-    def gerar_descricao(self, produto: Dict, analise: AnaliseIA = None) -> str:
-        """
-        Gera descrição otimizada para o produto
-
-        Args:
-            produto: Dados do produto
-            analise: Análise prévia (opcional)
-
-        Returns:
-            HTML da descrição
-        """
-        if analise and analise.descricao_seo:
-            return analise.descricao_seo
-
-        titulo = produto.get('title', 'Produto')
-        categoria = produto.get('category', 'acessórios')
-
-        return f"""
-<h3>✨ {titulo}</h3>
-
-<p>Produto de alta qualidade selecionado especialmente para você!</p>
-
-<h4>🎁 Destaques:</h4>
-<ul>
-<li>✅ Material premium</li>
-<li>✅ Acabamento impecável</li>
-<li>✅ Design moderno e elegante</li>
-<li>✅ Perfeito para presente</li>
-</ul>
-
-<h4>📦 Inclui:</h4>
-<ul>
-<li>1x {categoria.capitalize()}</li>
-<li>Embalagem segura</li>
-</ul>
-
-<p><strong>🚚 Frete Grátis para todo Brasil!</strong></p>
-<p><strong>🔒 Compra 100% Segura</strong></p>
-<p><strong>↩️ 7 dias para troca ou devolução</strong></p>
-"""
-
-
-class GoogleAIClient:
-    """Cliente alternativo usando Google Gemini"""
-
-    def __init__(self):
-        self.api_key = os.getenv("GOOGLE_API_KEY")
-        self.model = "gemini-pro"
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta"
-
-    def analisar_produto(self, produto: Dict) -> Optional[AnaliseIA]:
-        """Análise usando Google Gemini"""
-        if not self.api_key:
-            return None
-
-        # Implementação similar ao Claude
-        # ...
-        return None
-
-
-class OpenAIClient:
-    """Cliente alternativo usando OpenAI GPT"""
-
-    def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.model = "gpt-3.5-turbo"
-
-    def analisar_produto(self, produto: Dict) -> Optional[AnaliseIA]:
-        """Análise usando OpenAI"""
-        if not self.api_key:
-            return None
-
-        # Implementação similar ao Claude
-        # ...
-        return None
 

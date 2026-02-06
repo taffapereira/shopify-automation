@@ -19,3 +19,4 @@ Pillow>=10.0.0
 # Utilitários
 aiohttp>=3.9.0
 gql>=3.5.0
+schedule>=1.2.0
