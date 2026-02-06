@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.shopify.client import ShopifyClient
 from src.enrichment.service import EnrichmentService
-from src.collections.service import CollectionService
+from src.shopify_collections.service import CollectionService
 from src.health.checker import HealthChecker
 
 
