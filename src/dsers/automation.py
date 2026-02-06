@@ -49,6 +49,10 @@ class DSersLog:
 
 
 class DSersAutomation:
+    # URLs corretas do DSers
+    LOGIN_URL = "https://accounts.dsers.com/accounts/login?redirect_url=https%3A%2F%2Fwww.dsers.com%2Fapplication%2F"
+    IMPORT_URL = "https://www.dsers.com/app/import-list"
+
     def __init__(self, headless=False):
         self.email = os.getenv("DSERS_EMAIL", "")
         self.password = os.getenv("DSERS_PASSWORD", "")
@@ -80,25 +84,61 @@ class DSersAutomation:
         if self.logged_in:
             return True
         if not self.email:
+            logger.error("Email não configurado")
             return False
 
         self._init_driver()
-        self.driver.get("https://www.dsers.com/login")
-        time.sleep(3)
+        logger.info(f"🔗 Acessando DSers...")
+        self.driver.get(self.LOGIN_URL)
+        time.sleep(6)
 
-        email_input = WebDriverWait(self.driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']"))
-        )
-        email_input.send_keys(self.email)
+        # DSers usa Ant Design - espera input carregar
+        try:
+            # Espera primeiro input aparecer
+            WebDriverWait(self.driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input.ant-input"))
+            )
+            logger.info("✅ Página carregada")
 
-        self.driver.find_element(By.CSS_SELECTOR, "input[type='password']").send_keys(self.password)
-        self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
-        time.sleep(5)
+            # Pega todos os inputs
+            inputs = self.driver.find_elements(By.CSS_SELECTOR, "input.ant-input")
 
-        if "dashboard" in self.driver.current_url or "import" in self.driver.current_url:
+            if len(inputs) >= 2:
+                # Primeiro input = email
+                inputs[0].clear()
+                inputs[0].send_keys(self.email)
+                logger.info(f"✅ Email preenchido")
+                time.sleep(0.5)
+
+                # Segundo input = senha
+                inputs[1].clear()
+                inputs[1].send_keys(self.password)
+                logger.info(f"✅ Senha preenchida")
+                time.sleep(0.5)
+            else:
+                logger.error(f"❌ Apenas {len(inputs)} inputs encontrados")
+                return False
+
+            # Clica no botão LOG IN
+            login_btn = self.driver.find_element(By.CSS_SELECTOR, "button.ant-btn")
+            login_btn.click()
+            logger.info(f"✅ Botão LOGIN clicado")
+
+        except Exception as e:
+            logger.error(f"❌ Erro ao preencher formulário: {e}")
+            raise
+
+        time.sleep(10)
+
+        # Verifica se logou
+        current_url = self.driver.current_url.lower()
+        if any(x in current_url for x in ["dashboard", "import", "application", "app", "my-products"]):
             self.logged_in = True
             self._log("login", "", "ok", "Login OK")
+            logger.info("✅ LOGIN DSERS SUCESSO!")
             return True
+
+        logger.warning(f"❌ URL atual não indica login: {current_url[:50]}")
         return False
 
     @retry(max_attempts=3)
@@ -106,7 +146,7 @@ class DSersAutomation:
         if not self.logged_in and not self.login():
             return False
 
-        self.driver.get("https://www.dsers.com/app/import-list")
+        self.driver.get(self.IMPORT_URL)
         time.sleep(3)
 
         url_input = WebDriverWait(self.driver, 10).until(
@@ -127,7 +167,7 @@ class DSersAutomation:
         if not self.logged_in and not self.login():
             return False
 
-        self.driver.get("https://www.dsers.com/app/import-list")
+        self.driver.get(self.IMPORT_URL)
         time.sleep(3)
 
         try:
