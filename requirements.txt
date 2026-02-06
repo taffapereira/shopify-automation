@@ -1,5 +1,21 @@
+# Shopify
 ShopifyAPI>=12.6.0
-python-dotenv>=1.0.0
 requests>=2.31.0
-gql>=3.5.0
+python-dotenv>=1.0.0
+
+# Scraping
+selenium>=4.15.0
+beautifulsoup4>=4.12.0
+webdriver-manager>=4.0.0
+
+# IA
+anthropic>=0.18.0
+openai>=1.10.0
+google-generativeai>=0.3.0
+
+# Processamento de Imagens
+Pillow>=10.0.0
+
+# Utilitários
 aiohttp>=3.9.0
+gql>=3.5.0
