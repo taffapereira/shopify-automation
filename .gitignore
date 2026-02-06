@@ -1,0 +1,30 @@
+# Ambiente
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs e temporários
+logs/*.log
+temp/*
+!temp/.gitkeep
+relatorios/*
+!relatorios/.gitkeep
+testes/*
+!testes/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
