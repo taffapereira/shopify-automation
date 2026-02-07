@@ -147,18 +147,25 @@ Analise a imagem e retorne APENAS o JSON, sem texto adicional.
 
             # Gerar resposta
             if self.client:
-                # Nova API
-                import base64
+                # Nova API google.genai
                 img_bytes = BytesIO()
                 img.save(img_bytes, format='JPEG')
-                img_base64 = base64.b64encode(img_bytes.getvalue()).decode()
+                img_bytes.seek(0)
+
+                # Criar conteúdo multimodal
+                contents = [
+                    prompt,
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": __import__('base64').b64encode(img_bytes.getvalue()).decode()
+                        }
+                    }
+                ]
 
                 response = self.client.models.generate_content(
                     model=self.model,
-                    contents=[
-                        types.Part.from_text(prompt),
-                        types.Part.from_bytes(data=img_bytes.getvalue(), mime_type="image/jpeg")
-                    ]
+                    contents=contents
                 )
                 text = response.text
             else:

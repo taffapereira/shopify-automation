@@ -154,6 +154,120 @@ class ShopifyClient:
         }
         return self._request("POST", f"products/{product_id}/metafields.json", data)
 
+    # ==================== IMAGENS ====================
+
+    def get_product_images(self, product_id: int) -> List[Dict]:
+        """Lista imagens de um produto"""
+        result = self._request("GET", f"products/{product_id}/images.json")
+        return result.get("images", []) if result else []
+
+    def delete_product_image(self, product_id: int, image_id: int) -> bool:
+        """Deleta uma imagem específica de um produto"""
+        try:
+            self._request("DELETE", f"products/{product_id}/images/{image_id}.json")
+            return True
+        except Exception as e:
+            print(f"      ⚠️ Erro ao deletar imagem {image_id}: {e}")
+            return False
+
+    def create_product_image(self, product_id: int, image_base64: str, position: int = 1) -> Optional[Dict]:
+        """
+        Cria/upload de nova imagem para um produto
+
+        Args:
+            product_id: ID do produto
+            image_base64: Imagem em base64
+            position: Posição da imagem (1 = principal)
+        """
+        data = {
+            "image": {
+                "position": position,
+                "attachment": image_base64
+            }
+        }
+        try:
+            result = self._request("POST", f"products/{product_id}/images.json", data)
+            return result.get("image") if result else None
+        except Exception as e:
+            print(f"      ❌ Erro ao criar imagem: {e}")
+            return None
+
+    def replace_product_images(self, product_id: int, processed_images: List[bytes]) -> bool:
+        """
+        Substitui TODAS as imagens de um produto
+
+        Fluxo:
+        1. Busca imagens atuais
+        2. Deleta todas as imagens antigas
+        3. Faz upload das novas (base64)
+        4. Define primeira como principal
+
+        Args:
+            product_id: ID do produto Shopify
+            processed_images: Lista de imagens em bytes (WebP/JPEG format)
+
+        Returns:
+            bool: True se sucesso, False se falha
+        """
+        import base64
+        import time
+
+        try:
+            print(f"      🖼️  Substituindo imagens do produto {product_id}...")
+
+            # PASSO 1: Buscar imagens atuais
+            current_images = self.get_product_images(product_id)
+            old_images_count = len(current_images)
+
+            # PASSO 2: Deletar TODAS as imagens antigas
+            if old_images_count > 0:
+                print(f"      🗑️  Deletando {old_images_count} imagens antigas...")
+
+                for img in current_images:
+                    self.delete_product_image(product_id, img['id'])
+                    time.sleep(0.5)  # Rate limiting
+
+                print(f"      ✓ {old_images_count} imagens antigas removidas")
+
+            # PASSO 3: Fazer upload das novas imagens
+            print(f"      📤 Enviando {len(processed_images)} novas imagens...")
+
+            uploaded = 0
+            for idx, img_bytes in enumerate(processed_images, start=1):
+                try:
+                    # Converter bytes para base64
+                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+
+                    # Criar nova imagem via API
+                    result = self.create_product_image(product_id, img_base64, position=idx)
+
+                    if result:
+                        uploaded += 1
+                        print(f"         ✓ Imagem {idx}/{len(processed_images)} enviada")
+                    else:
+                        print(f"         ❌ Falha ao enviar imagem {idx}")
+
+                    # Rate limiting (Shopify limita a 2 req/segundo)
+                    time.sleep(0.6)
+
+                except Exception as e:
+                    print(f"         ❌ Erro ao enviar imagem {idx}: {e}")
+
+            success = uploaded == len(processed_images)
+
+            if success:
+                print(f"      ✅ {uploaded}/{len(processed_images)} imagens enviadas com sucesso")
+            else:
+                print(f"      ⚠️ Apenas {uploaded}/{len(processed_images)} imagens foram enviadas")
+
+            return success
+
+        except Exception as e:
+            print(f"      ❌ Erro crítico ao substituir imagens: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
 
 # Teste rápido
 if __name__ == "__main__":

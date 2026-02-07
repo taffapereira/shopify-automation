@@ -29,6 +29,7 @@ load_dotenv()
 from src.media.image_processor import AestheticImageProcessor
 from src.ai.content_generator import GeminiContentGenerator
 from src.pricing.advanced_calculator import AdvancedPriceCalculator
+from src.shopify.client import ShopifyClient
 
 # Configurar logging
 logging.basicConfig(
@@ -55,6 +56,7 @@ class ShopifyEnhancer:
         self.image_processor = AestheticImageProcessor()
         self.content_generator = GeminiContentGenerator()
         self.price_calculator = AdvancedPriceCalculator()
+        self.shopify_client = ShopifyClient()  # Cliente para upload de imagens
 
         self.dry_run = dry_run
         self.stats = {
@@ -220,9 +222,17 @@ class ShopifyEnhancer:
 
         # 4. ATUALIZAR NA SHOPIFY
         if not self.dry_run:
-            print("📤 Etapa 4/4: Atualizando na Shopify...")
+            print("🚀 Etapa 4/4: Atualizando na Shopify...")
 
-            # Atualizar produto
+            # 4A. SUBSTITUIR IMAGENS (upload das imagens processadas)
+            print("   📸 Substituindo imagens...")
+            images_updated = self.shopify_client.replace_product_images(pid, processed_images)
+
+            if not images_updated:
+                print("   ⚠️ Falha ao atualizar imagens - continuando com outros campos...")
+
+            # 4B. ATUALIZAR TÍTULO, DESCRIÇÃO, TAGS
+            print("   📝 Atualizando textos...")
             update_data = {
                 'product': {
                     'id': pid,
@@ -231,7 +241,7 @@ class ShopifyEnhancer:
                         new_content['descricao'],
                         pricing
                     ),
-                    'tags': ', '.join(new_content['tags'] + ['processado', 'clean-aesthetic'])
+                    'tags': ', '.join(new_content.get('tags', []) + ['processado', 'clean-aesthetic'])
                 }
             }
 
@@ -242,9 +252,15 @@ class ShopifyEnhancer:
             )
 
             if r.status_code != 200:
-                return {'success': False, 'error': f'API: {r.status_code}'}
+                print(f"   ❌ Erro ao atualizar textos: {r.status_code}")
+            else:
+                print("   ✓ Textos atualizados")
 
-            # Atualizar variantes (preço + opções traduzidas)
+            # 4C. ATUALIZAR VARIANTES (preço + opções traduzidas)
+            print("   🔄 Atualizando variantes...")
+            opcoes_traduzidas = new_content.get('opcoes_padronizadas', [])
+            variantes_atualizadas = 0
+
             for idx, variant in enumerate(produto['variants']):
                 vid = variant['id']
                 variant_data = {
@@ -255,18 +271,27 @@ class ShopifyEnhancer:
                     }
                 }
 
-                # Traduzir opção se existir
-                if idx < len(new_content.get('opcoes_padronizadas', [])):
-                    variant_data['variant']['option1'] = new_content['opcoes_padronizadas'][idx]
+                # Traduzir opção se existir mapeamento
+                if idx < len(opcoes_traduzidas):
+                    nova_opcao = opcoes_traduzidas[idx]
+                    # Limpar opção (remover "color", "in golden", etc)
+                    nova_opcao = self._limpar_opcao(nova_opcao)
+                    variant_data['variant']['option1'] = nova_opcao
+                    print(f"      ✓ Variante: {nova_opcao}")
 
                 r = requests.put(
                     f'{self.base_url}/variants/{vid}.json',
                     headers=self.headers,
                     json=variant_data
                 )
-                time.sleep(0.2)
 
-            print("   ✓ Produto atualizado!")
+                if r.status_code == 200:
+                    variantes_atualizadas += 1
+
+                time.sleep(0.3)  # Rate limiting
+
+            print(f"   ✓ {variantes_atualizadas} variantes atualizadas")
+            print("   ✅ Produto atualizado na loja!")
         else:
             print("⚠️  Etapa 4/4: PULADA (dry-run)")
 
@@ -294,6 +319,49 @@ class ShopifyEnhancer:
 </div>
 """
         return html
+
+    def _limpar_opcao(self, opcao: str) -> str:
+        """
+        Limpa e traduz nome de opção de variante
+        Remove 'color', 'in golden', etc e traduz para português
+        """
+        import re
+
+        if not opcao:
+            return opcao
+
+        # Dicionário de traduções
+        traducoes = {
+            'black': 'Preto', 'white': 'Branco', 'red': 'Vermelho',
+            'blue': 'Azul', 'green': 'Verde', 'pink': 'Rosa',
+            'gold': 'Dourado', 'golden': 'Dourado', 'silver': 'Prata',
+            'brown': 'Marrom', 'beige': 'Bege', 'grey': 'Cinza', 'gray': 'Cinza',
+            'purple': 'Roxo', 'orange': 'Laranja', 'yellow': 'Amarelo',
+            'navy': 'Azul Marinho', 'wine': 'Vinho', 'cream': 'Creme',
+            'khaki': 'Cáqui', 'coffee': 'Café', 'caramel': 'Caramelo',
+            'rose': 'Rosé', 'champagne': 'Champanhe', 'ivory': 'Marfim',
+            'apricot': 'Damasco', 'coral': 'Coral', 'mint': 'Menta',
+            'small': 'Pequeno', 'medium': 'Médio', 'large': 'Grande',
+        }
+
+        # Remover sufixos desnecessários
+        opcao_limpa = re.sub(r'\s*[-_]?\s*(color|colour|cor)\s*$', '', opcao, flags=re.IGNORECASE)
+        opcao_limpa = re.sub(r'\s+in\s+(golden|silver|gold)\s*$', '', opcao_limpa, flags=re.IGNORECASE)
+        opcao_limpa = opcao_limpa.strip()
+
+        # Traduzir palavras conhecidas
+        palavras = opcao_limpa.lower().split()
+        resultado = []
+
+        for palavra in palavras:
+            palavra_limpa = re.sub(r'[^a-z]', '', palavra)
+            if palavra_limpa in traducoes:
+                resultado.append(traducoes[palavra_limpa])
+            else:
+                # Manter palavra original capitalizada
+                resultado.append(palavra.capitalize())
+
+        return ' '.join(resultado) if resultado else opcao
 
     def _print_report(self):
         """Imprime relatório final"""
