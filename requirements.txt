@@ -11,6 +11,7 @@ webdriver-manager>=4.0.0
 # IA
 anthropic>=0.18.0
 openai>=1.10.0
+google-genai>=1.0.0
 google-generativeai>=0.3.0
 
 # Processamento de Imagens
