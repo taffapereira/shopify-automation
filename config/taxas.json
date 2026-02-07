@@ -1,0 +1,42 @@
+{
+  "global": {
+    "markup": 2.5,
+    "imposto_importacao": 0.15,
+    "icms": 0.18,
+    "frete_padrao": 30.0
+  },
+  "nichos": {
+    "bolsas": {
+      "markup": 2.5,
+      "frete_padrao": 35.0
+    },
+    "brincos": {
+      "markup": 2.5,
+      "frete_padrao": 15.0
+    },
+    "colares": {
+      "markup": 2.5,
+      "frete_padrao": 18.0
+    },
+    "pulseiras": {
+      "markup": 2.5,
+      "frete_padrao": 15.0
+    },
+    "aneis": {
+      "markup": 2.5,
+      "frete_padrao": 12.0
+    },
+    "relogios": {
+      "markup": 2.5,
+      "frete_padrao": 25.0
+    },
+    "oculos": {
+      "markup": 2.5,
+      "frete_padrao": 20.0
+    },
+    "acessorios": {
+      "markup": 2.5,
+      "frete_padrao": 20.0
+    }
+  }
+}

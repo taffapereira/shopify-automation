@@ -1,188 +1,81 @@
 """
-🖼️ Processador de Imagens
-Adiciona marca d'água e processa imagens de produtos
+🎨 Processador de Imagens Aesthetic
 """
-import os
-import io
-import base64
-import logging
-from typing import Optional, Tuple
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from PIL import Image, ImageEnhance
 import requests
+from io import BytesIO
+import logging
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-class ImageProcessor:
-    """Processador de imagens para produtos"""
+class AestheticImageProcessor:
+    def __init__(self, max_images: int = 6, target_size: tuple = (1200, 1500)):
+        self.max_images = max_images
+        self.target_size = target_size
+        self.timeout = 15
 
-    def __init__(
-        self,
-        marca_dagua: str = "TWP",
-        tamanho_padrao: Tuple[int, int] = (800, 800),
-        qualidade: int = 85,
-        opacidade_marca: int = 150
-    ):
-        """
-        Inicializa processador
+    def process_product_images(self, image_urls: List[str]) -> List[bytes]:
+        processed = []
+        for url in image_urls[:self.max_images]:
+            try:
+                img = self._download_image(url)
+                if img is None:
+                    continue
+                if img.mode in ("RGBA", "P"):
+                    bg = Image.new("RGB", img.size, (255, 255, 255))
+                    if img.mode == "RGBA":
+                        bg.paste(img, mask=img.split()[3])
+                    else:
+                        bg.paste(img)
+                    img = bg
+                elif img.mode != "RGB":
+                    img = img.convert("RGB")
+                img = self._remove_watermarks(img)
+                img = self._standardize_size(img)
+                img = self._enhance_quality(img)
+                processed.append(self._to_webp(img))
+            except Exception as e:
+                logger.error(f"Erro: {e}")
+        return processed
 
-        Args:
-            marca_dagua: Texto da marca d'água
-            tamanho_padrao: Tamanho padrão das imagens (largura, altura)
-            qualidade: Qualidade JPEG (0-100)
-            opacidade_marca: Opacidade da marca d'água (0-255)
-        """
-        self.marca_dagua = marca_dagua
-        self.tamanho_padrao = tamanho_padrao
-        self.qualidade = qualidade
-        self.opacidade_marca = opacidade_marca
-
-    def baixar_imagem(self, url: str) -> Optional[Image.Image]:
-        """
-        Baixa imagem de uma URL
-
-        Args:
-            url: URL da imagem
-
-        Returns:
-            PIL Image ou None
-        """
+    def _download_image(self, url: str) -> Optional[Image.Image]:
         try:
-            response = requests.get(url, timeout=30)
-            if response.status_code == 200:
-                return Image.open(io.BytesIO(response.content))
-        except Exception as e:
-            logger.error(f"Erro ao baixar imagem: {e}")
-        return None
-
-    def adicionar_marca_dagua(self, img: Image.Image) -> Image.Image:
-        """
-        Adiciona marca d'água na imagem
-
-        Args:
-            img: Imagem PIL
-
-        Returns:
-            Imagem com marca d'água
-        """
-        if img.mode != 'RGBA':
-            img = img.convert('RGBA')
-
-        # Cria layer para marca d'água
-        watermark = Image.new('RGBA', img.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(watermark)
-
-        # Tamanho da fonte proporcional à imagem
-        font_size = max(30, img.width // 15)
-
-        # Tenta carregar fonte
-        try:
-            font_paths = [
-                "/System/Library/Fonts/Helvetica.ttc",
-                "/System/Library/Fonts/SFNSDisplay.ttf",
-                "/Library/Fonts/Arial.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            ]
-            font = None
-            for path in font_paths:
-                if os.path.exists(path):
-                    font = ImageFont.truetype(path, font_size)
-                    break
-            if not font:
-                font = ImageFont.load_default()
+            r = requests.get(url, timeout=self.timeout)
+            r.raise_for_status()
+            return Image.open(BytesIO(r.content))
         except:
-            font = ImageFont.load_default()
+            return None
 
-        # Calcula posição (canto inferior direito)
-        bbox = draw.textbbox((0, 0), self.marca_dagua, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
+    def _remove_watermarks(self, img: Image.Image) -> Image.Image:
+        w, h = img.size
+        return img.crop((int(w*0.03), int(h*0.08), int(w*0.97), int(h*0.92)))
 
-        margin = 20
-        x = img.width - text_width - margin
-        y = img.height - text_height - margin
-
-        # Desenha sombra
-        draw.text((x + 2, y + 2), self.marca_dagua, font=font, fill=(0, 0, 0, 80))
-
-        # Desenha texto principal
-        draw.text((x, y), self.marca_dagua, font=font, fill=(255, 255, 255, self.opacidade_marca))
-
-        # Combina
-        resultado = Image.alpha_composite(img, watermark)
-        return resultado.convert('RGB')
-
-    def processar(self, img: Image.Image) -> Image.Image:
-        """
-        Processa imagem completa: redimensiona, melhora, marca d'água
-
-        Args:
-            img: Imagem PIL
-
-        Returns:
-            Imagem processada
-        """
-        # Redimensiona mantendo proporção
-        img.thumbnail(self.tamanho_padrao, Image.Resampling.LANCZOS)
-
-        # Cria fundo branco quadrado
-        resultado = Image.new('RGB', self.tamanho_padrao, (255, 255, 255))
-
-        # Centraliza
-        x = (self.tamanho_padrao[0] - img.width) // 2
-        y = (self.tamanho_padrao[1] - img.height) // 2
-
-        if img.mode == 'RGBA':
-            resultado.paste(img, (x, y), img)
+    def _standardize_size(self, img: Image.Image) -> Image.Image:
+        w, h = img.size
+        tw, th = self.target_size
+        tr = tw / th
+        cr = w / h
+        if cr > tr:
+            nw = int(h * tr)
+            left = (w - nw) // 2
+            img = img.crop((left, 0, left + nw, h))
         else:
-            resultado.paste(img, (x, y))
+            nh = int(w / tr)
+            top = (h - nh) // 2
+            img = img.crop((0, top, w, top + nh))
+        return img.resize(self.target_size, Image.Resampling.LANCZOS)
 
-        # Melhora contraste
-        enhancer = ImageEnhance.Contrast(resultado)
-        resultado = enhancer.enhance(1.05)
+    def _enhance_quality(self, img: Image.Image) -> Image.Image:
+        img = ImageEnhance.Brightness(img).enhance(1.05)
+        img = ImageEnhance.Contrast(img).enhance(1.10)
+        img = ImageEnhance.Color(img).enhance(1.10)
+        img = ImageEnhance.Sharpness(img).enhance(1.15)
+        return img
 
-        # Adiciona marca d'água
-        resultado = self.adicionar_marca_dagua(resultado)
-
-        return resultado
-
-    def processar_url(self, url: str) -> Optional[Image.Image]:
-        """
-        Baixa e processa imagem de URL
-
-        Args:
-            url: URL da imagem
-
-        Returns:
-            Imagem processada ou None
-        """
-        img = self.baixar_imagem(url)
-        if img:
-            return self.processar(img)
-        return None
-
-    def para_base64(self, img: Image.Image) -> str:
-        """
-        Converte imagem para base64
-
-        Args:
-            img: Imagem PIL
-
-        Returns:
-            String base64
-        """
-        buffer = io.BytesIO()
-        img.save(buffer, format='JPEG', quality=self.qualidade)
-        return base64.b64encode(buffer.getvalue()).decode()
-
-    def salvar(self, img: Image.Image, caminho: str):
-        """
-        Salva imagem em arquivo
-
-        Args:
-            img: Imagem PIL
-            caminho: Caminho do arquivo
-        """
-        img.save(caminho, format='JPEG', quality=self.qualidade)
-        logger.info(f"✅ Imagem salva: {caminho}")
+    def _to_webp(self, img: Image.Image, quality: int = 85) -> bytes:
+        buf = BytesIO()
+        img.save(buf, format="WEBP", quality=quality)
+        return buf.getvalue()
 
