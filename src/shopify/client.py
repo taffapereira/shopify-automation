@@ -1,8 +1,9 @@
 """
 Shopify API Client
-Cliente para interagir com a Admin API da Shopify
+Cliente para interagir com a Admin API da Shopify (REST + GraphQL)
 """
 import os
+import json
 import requests
 from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
@@ -18,13 +19,14 @@ class ShopifyClient:
         self.token = os.getenv("SHOPIFY_ACCESS_TOKEN")
         self.api_version = os.getenv("SHOPIFY_API_VERSION", "2024-01")
         self.base_url = f"https://{self.store}/admin/api/{self.api_version}"
+        self.graphql_url = f"https://{self.store}/admin/api/{self.api_version}/graphql.json"
         self.headers = {
             "X-Shopify-Access-Token": self.token,
             "Content-Type": "application/json"
         }
 
     def _request(self, method: str, endpoint: str, data: Optional[dict] = None) -> Optional[Dict[str, Any]]:
-        """Faz requisição para a API"""
+        """Faz requisição REST para a API"""
         url = f"{self.base_url}/{endpoint}"
         try:
             response = requests.request(method, url, headers=self.headers, json=data)
@@ -32,10 +34,29 @@ class ShopifyClient:
             return response.json() if response.text else None
         except requests.exceptions.HTTPError as e:
             print(f"❌ Erro HTTP: {e}")
-            print(f"   Response: {response.text}")
+            if response:
+                print(f"   Response: {response.text}")
             raise
         except Exception as e:
             print(f"❌ Erro: {e}")
+            raise
+
+    def _graphql(self, query: str, variables: Optional[dict] = None) -> Optional[Dict[str, Any]]:
+        """Faz requisição GraphQL para a API"""
+        try:
+            payload = {"query": query}
+            if variables:
+                payload["variables"] = variables
+
+            response = requests.post(
+                self.graphql_url,
+                headers=self.headers,
+                json=payload
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"❌ Erro GraphQL: {e}")
             raise
 
     # ==================== PRODUTOS ====================
@@ -267,6 +288,146 @@ class ShopifyClient:
             import traceback
             traceback.print_exc()
             return False
+
+    # ==================== GRAPHQL - STAGED UPLOADS ====================
+
+    def create_staged_upload(self, filename: str = "image.jpg", mime_type: str = "image/jpeg") -> Optional[Dict]:
+        """
+        Cria um staged upload para enviar arquivos para o Shopify
+        Usa GraphQL API
+
+        Returns:
+            Dict com 'url', 'resourceUrl' e 'parameters' ou None se falhar
+        """
+        mutation = """
+        mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+          stagedUploadsCreate(input: $input) {
+            stagedTargets {
+              url
+              resourceUrl
+              parameters {
+                name
+                value
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+
+        variables = {
+            "input": [{
+                "resource": "PRODUCT_IMAGE",
+                "filename": filename,
+                "mimeType": mime_type,
+                "httpMethod": "POST"
+            }]
+        }
+
+        try:
+            result = self._graphql(mutation, variables)
+
+            if result and result.get('data', {}).get('stagedUploadsCreate', {}).get('stagedTargets'):
+                return result['data']['stagedUploadsCreate']['stagedTargets'][0]
+
+            # Verificar erros
+            errors = result.get('data', {}).get('stagedUploadsCreate', {}).get('userErrors', [])
+            if errors:
+                print(f"      ⚠️ Erros no staged upload: {errors}")
+
+            return None
+
+        except Exception as e:
+            print(f"      ❌ Erro ao criar staged upload: {e}")
+            return None
+
+    def upload_to_staged_url(self, staged_target: Dict, file_bytes: bytes) -> bool:
+        """
+        Faz upload de arquivo para URL de staged upload
+
+        Args:
+            staged_target: Resultado de create_staged_upload
+            file_bytes: Bytes do arquivo a enviar
+        """
+        try:
+            url = staged_target['url']
+            parameters = {p['name']: p['value'] for p in staged_target['parameters']}
+
+            # Preparar form data
+            files = {
+                'file': ('image.jpg', file_bytes, 'image/jpeg')
+            }
+
+            response = requests.post(url, data=parameters, files=files, timeout=60)
+
+            if response.status_code in [200, 201, 204]:
+                return True
+            else:
+                print(f"      ⚠️ Upload falhou: {response.status_code} - {response.text[:200]}")
+                return False
+
+        except Exception as e:
+            print(f"      ❌ Erro no upload: {e}")
+            return False
+
+    def create_file_from_staged(self, resource_url: str, alt: str = "") -> Optional[str]:
+        """
+        Cria um arquivo no Shopify a partir de um staged upload
+
+        Args:
+            resource_url: URL do recurso do staged upload
+            alt: Texto alternativo da imagem
+
+        Returns:
+            URL da imagem criada ou None
+        """
+        mutation = """
+        mutation fileCreate($files: [FileCreateInput!]!) {
+          fileCreate(files: $files) {
+            files {
+              ... on MediaImage {
+                id
+                image {
+                  url
+                  altText
+                }
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+
+        variables = {
+            "files": [{
+                "originalSource": resource_url,
+                "contentType": "IMAGE",
+                "alt": alt
+            }]
+        }
+
+        try:
+            result = self._graphql(mutation, variables)
+
+            files = result.get('data', {}).get('fileCreate', {}).get('files', [])
+            if files and files[0].get('image'):
+                return files[0]['image']['url']
+
+            errors = result.get('data', {}).get('fileCreate', {}).get('userErrors', [])
+            if errors:
+                print(f"      ⚠️ Erros ao criar arquivo: {errors}")
+
+            return None
+
+        except Exception as e:
+            print(f"      ❌ Erro ao criar arquivo: {e}")
+            return None
 
 
 # Teste rápido
