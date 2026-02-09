@@ -249,11 +249,25 @@ class AestheticImageProcessor:
         return canvas
 
     def _enhance_quality(self, img: Image.Image) -> Image.Image:
-        """Ajustes de qualidade"""
-        img = ImageEnhance.Brightness(img).enhance(1.05)
-        img = ImageEnhance.Contrast(img).enhance(1.10)
-        img = ImageEnhance.Color(img).enhance(1.05)
-        img = ImageEnhance.Sharpness(img).enhance(1.15)
+        """Ajustes de qualidade com filtro 'Luxo' suave"""
+        # Aumentar levemente o brilho para dar clareza
+        img = ImageEnhance.Brightness(img).enhance(1.08)
+        
+        # Aumentar contraste para definir melhor os metais/pedras
+        img = ImageEnhance.Contrast(img).enhance(1.15)
+        
+        # Leve aumento de saturação para realçar o ouro/prata
+        img = ImageEnhance.Color(img).enhance(1.08)
+        
+        # Nitidez para detalhes finos
+        img = ImageEnhance.Sharpness(img).enhance(1.2)
+        
+        # Toque final: Leve aquecimento (filtro 'Golden Hour')
+        r, g, b = img.split()
+        r = r.point(lambda i: i * 1.02) # Leve boost no vermelho
+        b = b.point(lambda i: i * 0.98) # Leve redução no azul
+        img = Image.merge('RGB', (r, g, b))
+        
         return img
 
     def _to_webp(self, img: Image.Image, quality: int = 90) -> bytes:
